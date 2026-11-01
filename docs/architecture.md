@@ -1,6 +1,6 @@
 # Architecture
 
-One machine. `python run.py` lists every two-letter survey on `https://download.bls.gov/pub/time.series/`, then downloads and writes each catalog.
+`python run.py` lists every two-letter survey on `https://download.bls.gov/pub/time.series/`, then downloads and writes each catalog.
 
 ```text
 python run.py
@@ -27,17 +27,14 @@ python run.py
   data/run.json
 ```
 
-## Modules
-
 | Module | Job |
 |---|---|
 | `run.py` / `pipeline.py` | List every catalog, download, process, write, record `data/run.json` |
-| `config.py` | Reads `config/default.toml`. Paths are `data/<prefix>/raw` and `data/<prefix>/series`. |
+| `config.py` | Defaults for the BLS URL, User-Agent, and `data/<prefix>/` paths |
 | `discovery.py` | Root listing and per-catalog file roles |
 | `downloader.py` | Streaming download, retries, checksums |
+| `manifest.py` | Per-catalog file receipt used during download |
 | `schema.py` | Header-based layout and join rules |
 | `engine.py` | Load, dedupe, write one JSON file per `series_id` |
-
-`scripts/sample_catalog.py` is a metadata-only peek. It is not part of `run.py`.
 
 A complete data file (`AllItems`, `AllData`, `AllCESSeries`) outranks a `Current` file. Codes stay text. A name table is joined when its code and label name the same thing.

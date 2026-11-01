@@ -5,13 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bls-corpus"
 version = "0.1.0"
-description = "Download and parse any BLS LABSTAT survey into Parquet and JSON"
+description = "Download every BLS LABSTAT catalog and write one JSON file per series"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "httpx>=0.27",
-    "pyarrow>=16",
     "duckdb>=1.1",
 ]
 
@@ -19,7 +18,7 @@ dependencies = [
 dev = ["pytest>=8"]
 
 [project.scripts]
-bls-corpus = "bls_corpus.cli:main"
+bls-corpus = "bls_corpus.pipeline:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

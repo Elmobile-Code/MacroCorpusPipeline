@@ -8,7 +8,7 @@ The repository does not contain downloaded surveys. `python run.py` creates `dat
 
 - Python 3.11 or newer (`python3 --version`).
 - Git.
-- A network connection to `download.bls.gov`. The program sends a descriptive User-Agent from `config/default.toml`. A bare download client is rejected.
+- A network connection to `download.bls.gov`. The program sends a descriptive User-Agent. A bare download client is rejected.
 
 On macOS the system `python3` is sometimes older than 3.11. Install a newer Python first.
 
@@ -77,24 +77,10 @@ python -m pytest
 
 The tests use a small saved slice of the BD files in `tests/fixtures/bd/` and mocked HTTP.
 
-## 5. Catalog peek without full histories
-
-```bash
-python scripts/sample_catalog.py --program CU
-```
-
-That writes `samples/cu/metadata.json` and five short series. It does not replace `run.py`.
-
 ## How a survey is read
 
 The pipeline reads the header row of each file. A complete data file (`AllItems`, `AllData`, or `AllCESSeries`) is preferred over a `Current` file when both contain the same series, year, and period. Codes stay text. Seasonal status and frequency come from the catalog and the name tables, not from the series title. Folders that are not surveys (`compressed`, `sdmx`, `esbr`) and prefixes with no LABSTAT directory (`PF`, `PI`, `LF`) are skipped.
 
-Settings that you can change without editing Python are in `config/default.toml`.
-
 ## More detail
 
-- [docs/architecture.md](docs/architecture.md) — how one run moves from the directory listing to the output files
-- [docs/data_dictionary.md](docs/data_dictionary.md) — column meanings
-- [docs/source_inventory.md](docs/source_inventory.md) — how the download site behaves
-- [docs/validation_report.md](docs/validation_report.md) — measured coverage for an earlier BD snapshot
-- [samples/README.md](samples/README.md) — metadata-only peek counts
+[docs/architecture.md](docs/architecture.md) — how one run moves from the directory listing to the output files

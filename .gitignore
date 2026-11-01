@@ -4,20 +4,13 @@ __pycache__/
 .venv/
 .DS_Store
 
-# Downloaded and generated data. Rebuild with python run.py.
 data/
 logs/
 *.part
 *.duckdb
 .env
-BLS_API_KEY
-bd-snapshot-*.tar.gz
-SHA256SUMS
-README.txt
-
-# Sample-run outputs. samples/README.md stays tracked.
-samples/*
-!samples/README.md
-
-# Local CPI/CES scratch files. Not part of the pipeline.
 reference/
+samples/
+bd-snapshot-*.tar.gz
+README.txt
+SHA256SUMS

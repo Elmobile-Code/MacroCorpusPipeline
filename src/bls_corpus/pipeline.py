@@ -156,13 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Process local raw files only. Requires --only.")
     p.add_argument("--data-dir", default=None)
     p.add_argument("--source-root", default=None)
-    p.add_argument("--config", default=None)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    cfg = load_config(args.config)
+    cfg = load_config()
     if args.data_dir:
         cfg.data_dir = Path(args.data_dir)
     if args.source_root:
@@ -177,4 +176,4 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if log.get("failed") else 0
 
 
-__all__ = ["main", "run_all", "process_program", "list_catalog_prefixes"]
+__all__ = ["main", "run_all", "process_program"]
