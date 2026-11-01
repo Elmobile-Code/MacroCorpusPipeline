@@ -1,7 +1,6 @@
 """Generic LABSTAT processor.
 
-Reads raw TSV files with DuckDB (one pass, no Python row loops), writes
-Parquet plus a model-ready JSON pair: dataset.json and series.jsonl.
+Reads raw TSV files with DuckDB and writes one JSON file per series_id.
 """
 from __future__ import annotations
 
@@ -55,6 +54,13 @@ def _sql_str(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _write_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _lines_sql(path: Path, encoding: str) -> str:
     return (
         f"read_csv({_sql_str(str(path))}, columns={{'line':'VARCHAR'}}, "
@@ -73,11 +79,12 @@ def _split_sql(path: Path, encoding: str, skip_header: bool = True) -> str:
 
 
 class Engine:
-    def __init__(self, raw_dir: Path, out_dir: Path, snapshot_id: str, program: str):
+    def __init__(self, raw_dir: Path, out_dir: Path, program: str,
+                 snapshot_id: str | None = None):
         self.raw_dir = Path(raw_dir)
         self.out_dir = Path(out_dir)
-        self.snapshot_id = snapshot_id
         self.program = program.upper()
+        self.snapshot_id = snapshot_id or self.program.lower()
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.out_dir / "work.duckdb"
         if self.db_path.exists():
@@ -144,23 +151,136 @@ class Engine:
         self._load_observations(schema)
         self._enrich_catalog(schema)
         stats = self._stats()
-        self._write_parquet()
+        self.stats = stats
         stats.elapsed_s = time.perf_counter() - started
-        (self.out_dir / "schema.json").write_text(
-            json.dumps(schema.to_dict(), indent=2), encoding="utf-8")
-        (self.out_dir / "parse_stats.json").write_text(
-            json.dumps(stats.parse_stats(), indent=2), encoding="utf-8")
+        return stats
+
+    def export_series(self, schema: ProgramSchema,
+                      extra: dict | None = None) -> tuple[Path, Path]:
+        extra = extra or {}
+        series_dir = self.out_dir / "series"
+        if series_dir.exists():
+            for old in series_dir.glob("*.json"):
+                old.unlink()
+        series_dir.mkdir(parents=True, exist_ok=True)
+
+        label_selects = []
+        used = {_ident(c) for c in schema.catalog_columns}
+        for m in schema.mappings:
+            if not m.links_to or not m.label_col:
+                continue
+            alias = _ident(m.label_col)
+            if alias in used:
+                continue
+            used.add(alias)
+            code_col = _ident(m.links_to[0])
+            label_selects.append(
+                f"(SELECT label FROM mappings WHERE table_name = {_sql_str(m.table)} "
+                f"AND code = c.{code_col} LIMIT 1) AS {alias}"
+            )
+        catalog_selects = [f"c.{_ident(c)} AS {_ident(c)}" for c in schema.catalog_columns]
+        select_list = ", ".join(catalog_selects + label_selects) or "c.series_id"
+        self.con.execute("CREATE OR REPLACE TABLE catalog_flat AS "
+                         f"SELECT {select_list} FROM catalog_raw c "
+                         f"WHERE c.{_ident('series_id')} IS NOT NULL "
+                         f"AND c.{_ident('series_id')} <> ''")
+        self.con.execute("""
+            CREATE OR REPLACE TABLE obs_grouped AS
+            SELECT series_id,
+                   to_json(list(json_object(
+                       'year', CAST(year AS VARCHAR),
+                       'period', period,
+                       'value', value_raw,
+                       'footnote_codes', coalesce(footnote_codes, '')
+                   ) ORDER BY year, period)) AS observations
+            FROM observations
+            GROUP BY 1
+        """)
+        tmp = self.out_dir / "_series.jsonl"
+        self.con.execute(f"""
+            COPY (
+              SELECT f.*, coalesce(o.observations, '[]'::JSON) AS observations
+              FROM catalog_flat f
+              LEFT JOIN obs_grouped o ON o.series_id = f.series_id
+            ) TO {_sql_str(str(tmp))} (FORMAT JSON)
+        """)
+        index: dict[str, dict] = {}
+        with tmp.open(encoding="utf-8") as handle:
+            for line in handle:
+                rec = json.loads(line)
+                if rec.get("observations") is None:
+                    rec["observations"] = []
+                sid = rec.get("series_id") or ""
+                if not sid:
+                    continue
+                dest = series_dir / f"{sid}.json"
+                dest.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+                title = rec.get("series_title") or rec.get("series_name") or ""
+                index[sid] = {
+                    "path": f"series/{sid}.json",
+                    "series_title": title,
+                    "observation_count": len(rec["observations"]),
+                }
+        tmp.unlink(missing_ok=True)
+
+        joins = self._join_stats(schema)
+        coverage = self.con.execute("""
+            SELECT (SELECT count(*) FROM catalog),
+                   (SELECT count(*) FROM observations),
+                   (SELECT count(*) FROM catalog WHERE observation_count = 0),
+                   (SELECT min(year) FROM observations),
+                   (SELECT max(year) FROM observations)
+        """).fetchone()
+        card = {
+            "program": self.program,
+            "listing_sha256": extra.get("listing_sha256"),
+            "files": extra.get("files", []),
+            "catalog_fields": schema.catalog_columns,
+            "joins": joins,
+            "coverage": {
+                "series": coverage[0],
+                "observations": coverage[1],
+                "catalog_without_observations": coverage[2],
+                "year_min": coverage[3],
+                "year_max": coverage[4],
+            },
+            "validation": self.stats.parse_stats() if getattr(self, "stats", None) else {},
+        }
+        card_path = self.out_dir / "catalog.json"
+        index_path = self.out_dir / "index.json"
+        _write_json(card_path, card)
+        _write_json(index_path, index)
+        return card_path, index_path
+
+    def _join_stats(self, schema: ProgramSchema) -> list[dict]:
+        stats = []
+        for m in schema.mappings:
+            if not m.links_to or not m.label_col:
+                continue
+            col = _ident(m.links_to[0])
+            row = self.con.execute(f"""
+                SELECT
+                  count(*) FILTER (WHERE c.{col} IS NOT NULL AND c.{col} <> ''
+                    AND m.label IS NOT NULL) AS matched,
+                  count(*) FILTER (WHERE c.{col} IS NULL OR c.{col} = '') AS blank,
+                  count(*) FILTER (WHERE c.{col} IS NOT NULL AND c.{col} <> ''
+                    AND m.label IS NULL) AS unmatched
+                FROM catalog_raw c
+                LEFT JOIN mappings m
+                  ON m.table_name = {_sql_str(m.table)} AND m.code = c.{col}
+            """).fetchone()
+            stats.append({
+                "file": m.path,
+                "catalog_column": m.links_to[0],
+                "label_column": m.label_col,
+                "matched": int(row[0] or 0),
+                "blank": int(row[1] or 0),
+                "unmatched": int(row[2] or 0),
+            })
         return stats
 
     def export_json(self, schema: ProgramSchema) -> tuple[Path, Path]:
-        card_path = self.out_dir / "dataset.json"
-        series_path = self.out_dir / "series.jsonl"
-        card = self._dataset_card(schema)
-        tmp = card_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(card, indent=2, default=str), encoding="utf-8")
-        os.replace(tmp, card_path)
-        self._write_series_jsonl(schema, series_path)
-        return card_path, series_path
+        return self.export_series(schema)
 
     # -- loaders -----------------------------------------------------------
     def _load_catalog(self, schema: ProgramSchema) -> None:
@@ -483,13 +603,13 @@ class Engine:
         os.replace(tmp, dest)
 
 
-def process_snapshot(raw_dir: Path, out_dir: Path, snapshot_id: str,
-                     program: str) -> tuple[ProcessResult, ProgramSchema]:
+def process_catalog(raw_dir: Path, out_dir: Path, program: str,
+                    extra: dict | None = None) -> tuple[ProcessResult, ProgramSchema]:
     schema = infer_schema(raw_dir, program)
-    engine = Engine(raw_dir, out_dir, snapshot_id, program)
+    engine = Engine(raw_dir, out_dir, program)
     try:
         stats = engine.process(schema)
-        engine.export_json(schema)
+        engine.export_series(schema, extra=extra)
         return stats, schema
     finally:
         engine.close()
@@ -499,3 +619,9 @@ def process_snapshot(raw_dir: Path, out_dir: Path, snapshot_id: str,
             for p in spill.iterdir():
                 p.unlink()
             spill.rmdir()
+
+
+def process_snapshot(raw_dir: Path, out_dir: Path, snapshot_id: str,
+                     program: str) -> tuple[ProcessResult, ProgramSchema]:
+    return process_catalog(raw_dir, out_dir, program,
+                           extra={"snapshot_id": snapshot_id})

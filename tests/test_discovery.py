@@ -1,6 +1,8 @@
 import pytest
 
-from bls_corpus.discovery import DiscoveryError, discover_remote, parse_listing, snapshot_id_for
+from bls_corpus.discovery import (
+    DiscoveryError, discover_remote, list_catalog_prefixes, parse_listing, snapshot_id_for,
+)
 
 SAMPLE = """<html><head><title>download.bls.gov - /pub/time.series/bd/</title></head><body>
 <pre><A HREF="/pub/time.series/">[To Parent Directory]</A><br><br>
@@ -36,6 +38,17 @@ def test_missing_required_fails_visibly():
     html = "<pre> 7/29/2026 10:00 AM  153 <A HREF=\"/bd/bd.footnote\">bd.footnote</A></pre>"
     d = parse_listing(html, "BD", "https://x/bd/")
     assert "series_catalog (*.series)" in d.required_missing[0]
+
+
+def test_list_catalog_prefixes_skips_non_survey_dirs():
+    html = """<pre>
+ 1/1/2026 10:00 AM        &lt;dir&gt; <A HREF="/pub/time.series/cu/">cu</A><br>
+ 1/1/2026 10:00 AM        &lt;dir&gt; <A HREF="/pub/time.series/ws/">ws</A><br>
+ 1/1/2026 10:00 AM        &lt;dir&gt; <A HREF="/pub/time.series/pf/">pf</A><br>
+ 1/1/2026 10:00 AM        &lt;dir&gt; <A HREF="/pub/time.series/compressed/">compressed</A><br>
+ 1/1/2026 10:00 AM        5929 <A HREF="/pub/time.series/overview.txt">overview.txt</A><br>
+</pre>"""
+    assert list_catalog_prefixes(html) == ["cu", "ws"]
 
 
 def test_snapshot_id_deterministic():

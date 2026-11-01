@@ -18,9 +18,10 @@ from pathlib import Path
 
 from . import __version__, engine as engine_mod, validate as validate_mod
 from .config import AppConfig, load_config
-from .discovery import discover_remote, snapshot_id_for
+from .discovery import discover_remote
 from .downloader import Downloader
-from .manifest import Manifest, latest_manifest, new_manifest
+from .manifest import Manifest, new_manifest
+from . import pipeline
 
 
 def _apply_overrides(cfg: AppConfig, args) -> AppConfig:
@@ -35,14 +36,14 @@ def _apply_overrides(cfg: AppConfig, args) -> AppConfig:
     return cfg
 
 
-def _manifest_path(cfg: AppConfig, snapshot_id: str) -> Path:
-    return cfg.manifest_root / f"{snapshot_id}.json"
+def _manifest_path(cfg: AppConfig, snapshot_id: str | None = None) -> Path:
+    return cfg.catalog_dir / "download.json"
 
 
 def cmd_discover(cfg: AppConfig, args) -> int:
     disc = discover_remote(cfg.program, cfg.program_url, cfg.user_agent,
                            timeout_s=cfg.read_timeout_s)
-    snapshot = args.snapshot or snapshot_id_for(disc)
+    snapshot = args.snapshot or disc.program.lower()
     print(f"program={disc.program} source={disc.source_url} snapshot={snapshot}")
     for f in disc.files:
         print(f"  {f.name:28} role={f.file_role:16} required={f.required} "
@@ -63,14 +64,13 @@ def cmd_download(cfg: AppConfig, args) -> int:
     started = time.perf_counter()
     disc = discover_remote(cfg.program, cfg.program_url, cfg.user_agent,
                            timeout_s=cfg.read_timeout_s)
-    snapshot = args.snapshot or snapshot_id_for(disc)
+    snapshot = args.snapshot or disc.program.lower()
     manifest_path = _manifest_path(cfg, snapshot)
     prior = Manifest.load(manifest_path) if manifest_path.exists() else None
-    # Reuse identical snapshot manifest if present (idempotent reruns).
     manifest = prior if prior and prior.snapshot_id == snapshot else new_manifest(
         disc, snapshot, config_summary={"concurrency": cfg.concurrency,
                                         "version": __version__})
-    raw_dir = cfg.raw_root / snapshot
+    raw_dir = cfg.raw_root
     only: set[str] | None = None
     if getattr(args, "retry_failed", False) and prior:
         only = {r.relative_path for r in prior.files if r.download_status == "failed"}
@@ -86,11 +86,9 @@ def cmd_download(cfg: AppConfig, args) -> int:
 
 
 def _load_manifest_for(cfg: AppConfig, args) -> Manifest:
-    if getattr(args, "snapshot", None):
-        return Manifest.load(_manifest_path(cfg, args.snapshot))
-    path = latest_manifest(cfg.manifest_root, cfg.program)
-    if path is None:
-        raise SystemExit("no local manifest found; run `discover`/`download` first (or drop --offline)")
+    path = _manifest_path(cfg)
+    if path is None or not path.exists():
+        raise SystemExit("no local download.json found; run `python run.py` first")
     return Manifest.load(path)
 
 
@@ -98,9 +96,9 @@ def cmd_parse(cfg: AppConfig, args) -> int:
     started = time.perf_counter()
     manifest = _load_manifest_for(cfg, args)
     snapshot = manifest.snapshot_id
-    raw_dir = cfg.raw_root / snapshot
-    out_dir = cfg.processed_root / snapshot
-    stats, schema = engine_mod.process_snapshot(raw_dir, out_dir, snapshot, manifest.program_id)
+    raw_dir = cfg.raw_root
+    out_dir = cfg.catalog_dir
+    stats, schema = engine_mod.process_catalog(raw_dir, out_dir, manifest.program_id)
     present = {p.name for p in raw_dir.iterdir() if p.is_file()}
     for rec in manifest.files:
         name = rec.relative_path
@@ -122,10 +120,12 @@ def cmd_parse(cfg: AppConfig, args) -> int:
 def cmd_validate(cfg: AppConfig, args) -> int:
     manifest = _load_manifest_for(cfg, args)
     snapshot = manifest.snapshot_id
-    out_dir = cfg.processed_root / snapshot
-    stats_path = out_dir / "parse_stats.json"
-    stats = json.loads(stats_path.read_text()) if stats_path.exists() else {}
-    rep = validate_mod.validate_snapshot(manifest, cfg.raw_root / snapshot, out_dir, stats)
+    out_dir = cfg.catalog_dir
+    card_path = out_dir / "catalog.json"
+    stats = {}
+    if card_path.exists():
+        stats = json.loads(card_path.read_text()).get("validation") or {}
+    rep = validate_mod.validate_snapshot(manifest, cfg.raw_root, out_dir, stats)
     jp, mp = validate_mod.save_report(rep, out_dir)
     print(rep.to_markdown())
     print(f"reports: {jp} {mp}")
@@ -136,7 +136,7 @@ def cmd_validate_api(cfg: AppConfig, args) -> int:
     from .api_validation import compare_with_api
 
     manifest = _load_manifest_for(cfg, args)
-    out_dir = cfg.processed_root / manifest.snapshot_id
+    out_dir = cfg.catalog_dir
     result = compare_with_api(out_dir / "series_catalog.parquet",
                               out_dir / "observations.parquet", cfg,
                               sample_size=args.sample_size)
@@ -145,14 +145,9 @@ def cmd_validate_api(cfg: AppConfig, args) -> int:
 
 
 def cmd_run(cfg: AppConfig, args) -> int:
-    if not args.offline:
-        rc = cmd_download(cfg, args)
-        if rc:
-            return rc
-    rc = cmd_parse(cfg, args)
-    if rc:
-        return rc
-    return cmd_validate(cfg, args)
+    only = [cfg.program] if cfg.program else None
+    log = pipeline.run_all(cfg, only=only, force=True, offline=getattr(args, "offline", False))
+    return 1 if log.get("failed") else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

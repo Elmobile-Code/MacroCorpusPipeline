@@ -1,16 +1,18 @@
 # MacroCorpus pipeline
 
-Downloads one BLS survey from the official [LABSTAT flat files](https://download.bls.gov/pub/time.series/) and turns it into JSON and Parquet. The survey is chosen with a two-letter prefix such as `WS`, `CU`, or `BD`. The same command works for every prefix. The public BLS API is not required.
+Downloads every survey from the official [BLS LABSTAT](https://download.bls.gov/pub/time.series/) flat files and writes one JSON file per series. The public BLS API is not required.
 
-Nothing in this repository is a downloaded survey. The first run creates a `data/` folder on your machine.
+The repository does not contain downloaded surveys. `python run.py` creates `data/` on your machine.
 
 ## 1. What you need
 
-- Python 3.11 or newer. Check with `python3 --version`.
+- Python 3.11 or newer (`python3 --version`).
 - Git.
-- A network connection to `download.bls.gov`. The project sends a descriptive User-Agent from `config/default.toml`. A bare download client is rejected by the BLS site.
+- A network connection to `download.bls.gov`. The program sends a descriptive User-Agent from `config/default.toml`. A bare download client is rejected.
 
-On macOS, the system `python3` is sometimes older than 3.11. Install a newer Python first, then use that interpreter in the steps below.
+On macOS the system `python3` is sometimes older than 3.11. Install a newer Python first.
+
+The full LABSTAT tree is large: tens of catalogs, some with multi-hundred-megabyte history files, and a few (such as fatal injuries) with hundreds of thousands of series files.
 
 ## 2. Clone and install
 
@@ -23,93 +25,49 @@ python -m pip install -U pip
 python -m pip install -e ".[dev]"
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` instead of `source`.
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
 
-Check that the command is available:
+Leave the virtualenv active. In a new terminal, run `source .venv/bin/activate` again from the project folder.
 
-```bash
-bls-corpus --help
-```
-
-Leave the virtualenv active for the commands below. If you open a new terminal, run `source .venv/bin/activate` again from the project folder.
-
-## 3. First full run
-
-Start with work stoppages. That survey has 6 series, so the download and the build finish quickly and you can see the output shape before running a large survey.
+## 3. Download every catalog
 
 ```bash
-bls-corpus run --program WS
+python run.py
 ```
 
-That one command does three things: download the files, build the tables, and write a check report.
+That is the only command a new user needs. It lists the LABSTAT root, then for each two-letter survey folder downloads the files, joins code names, and writes the series files. One catalog failing is recorded and the next catalog still runs. A later `python run.py` skips a catalog whose remote listing has not changed. Pass `--force` to rebuild anyway.
+
+`--only WS,CU` is for tests and debugging. It is not required to process a catalog.
 
 When it finishes, look here:
 
 | Path | What it is |
 |---|---|
-| `data/raw/ws/<snapshot_id>/` | The original BLS files, saved as downloaded |
-| `data/processed/<snapshot_id>/dataset.json` | One card for the survey: layout, code names, footnotes, counts |
-| `data/processed/<snapshot_id>/series.jsonl` | One JSON object per series, including each value |
-| `data/processed/<snapshot_id>/series_catalog.parquet` | One row per series |
-| `data/processed/<snapshot_id>/observations.parquet` | One row per series, year, and period |
-| `data/manifests/<snapshot_id>.json` | Receipt: file sizes and SHA-256 |
-| `data/processed/<snapshot_id>/validation-<snapshot_id>.md` | Short check report |
+| `data/run.json` | Which prefixes were found, which finished, which failed |
+| `data/cu/raw/` | Original BLS files for that catalog |
+| `data/cu/catalog.json` | Joins, coverage, file checksums, listing fingerprint |
+| `data/cu/index.json` | `series_id` → file path, title, observation count |
+| `data/cu/series/CUSR0000SA0.json` | One series: codes, names, and the full history of values |
 
-`<snapshot_id>` looks like `ws-20261009T100000Z-b16fb1b4`. The exact id changes when BLS updates the folder. Open `dataset.json` in any text editor. `series.jsonl` is one JSON object per line, not one pretty-printed file.
+Each series file looks like this:
 
-Business Employment Dynamics is the large example: about 34,000 series and about 4.6 million values. Expect a few hundred megabytes of download.
-
-```bash
-bls-corpus run --program BD
+```json
+{
+  "series_id": "CUSR0000SA0",
+  "area_code": "0000",
+  "area_name": "U.S. city average",
+  "item_code": "SA0",
+  "item_name": "All items",
+  "series_title": "All items in U.S. city average...",
+  "observations": [
+    {"year": "1997", "period": "M01", "value": "159.40", "footnote_codes": ""}
+  ]
+}
 ```
 
-Any other prefix is the same command, for example `bls-corpus run --program CU`. The prefix is the folder name on the LABSTAT site, in upper case.
+There is no snapshot id in the path or in the series body. A rerun overwrites `data/<prefix>/`.
 
-## 4. Run the stages separately
-
-Use these when you want to stop between download and processing.
-
-```bash
-bls-corpus discover --program WS
-bls-corpus download --program WS
-bls-corpus parse --program WS
-bls-corpus validate --program WS
-```
-
-`discover` only prints the file list. `download` fills `data/raw/`. `parse` reads those local files and writes `data/processed/`. `validate` writes the check report.
-
-After a successful download, rebuild without touching the network:
-
-```bash
-bls-corpus run --program WS --offline
-```
-
-If a file failed partway through:
-
-```bash
-bls-corpus download --program WS --retry-failed
-```
-
-## 5. Catalog sample, without the full history
-
-Use this to see how a survey’s codes connect, without saving every observation.
-
-```bash
-python scripts/sample_catalog.py --program CU
-```
-
-It writes:
-
-| Path | What it is |
-|---|---|
-| `samples/cu/metadata.json` | Every series, with names attached. No history. |
-| `samples/cu/samples.json` | Five series and a short run of values |
-| `samples/cu/summary.json` | Series count and whether every code found a name |
-| `samples/cu/raw/` | The series list and the name tables only |
-
-Replace `CU` with another prefix to sample that survey. Counts from a previous local run are written up in [samples/README.md](samples/README.md). Those output files are created on your machine and are not in the git repository.
-
-## 6. Tests
+## 4. Tests
 
 No download and no API key:
 
@@ -119,25 +77,24 @@ python -m pytest
 
 The tests use a small saved slice of the BD files in `tests/fixtures/bd/` and mocked HTTP.
 
-## 7. Optional API spot-check
-
-This compares a handful of values with api.bls.gov. It does not replace the files you downloaded. Skip it for a normal run.
+## 5. Catalog peek without full histories
 
 ```bash
-bls-corpus validate-api --program BD --sample-size 25
+python scripts/sample_catalog.py --program CU
 ```
 
-A key is optional. If you have one, set `BLS_API_KEY` in the environment before that command. Do not put the key in a file that you commit.
+That writes `samples/cu/metadata.json` and five short series. It does not replace `run.py`.
 
 ## How a survey is read
 
-The pipeline reads the header row of each file. It does not have a separate program for each survey. A complete data file (`AllItems`, `AllData`, or `AllCESSeries`) is preferred over a `Current` file when both contain the same series, year, and period. Codes stay text, so leading zeros are kept. Seasonal status and frequency come from the catalog and the name tables, not from the series title.
+The pipeline reads the header row of each file. A complete data file (`AllItems`, `AllData`, or `AllCESSeries`) is preferred over a `Current` file when both contain the same series, year, and period. Codes stay text. Seasonal status and frequency come from the catalog and the name tables, not from the series title. Folders that are not surveys (`compressed`, `sdmx`, `esbr`) and prefixes with no LABSTAT directory (`PF`, `PI`, `LF`) are skipped.
 
-Settings that you can change without editing Python are in `config/default.toml`: the default prefix, timeouts, and how many downloads run at once. `--program` overrides the default prefix.
+Settings that you can change without editing Python are in `config/default.toml`.
 
 ## More detail
 
-- [docs/architecture.md](docs/architecture.md) — the path from the BLS folder listing to the output files
+- [docs/architecture.md](docs/architecture.md) — how one run moves from the directory listing to the output files
 - [docs/data_dictionary.md](docs/data_dictionary.md) — column meanings
 - [docs/source_inventory.md](docs/source_inventory.md) — how the download site behaves
-- [docs/validation_report.md](docs/validation_report.md) — measured coverage for the BD snapshot
+- [docs/validation_report.md](docs/validation_report.md) — measured coverage for an earlier BD snapshot
+- [samples/README.md](samples/README.md) — metadata-only peek counts

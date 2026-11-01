@@ -137,6 +137,42 @@ class DiscoveryError(RuntimeError):
     pass
 
 
+SKIP_ROOT_DIRS = {"compressed", "sdmx", "esbr"}
+SKIP_PREFIXES = {"pf", "pi", "lf"}
+
+
+def list_catalog_prefixes(html: str) -> list[str]:
+    """Two-letter survey folders on the LABSTAT root listing."""
+    found: set[str] = set()
+    for m in _LINE_RE.finditer(html):
+        name = m.group("name").strip().rstrip("/")
+        if name.startswith("[To Parent"):
+            continue
+        if m.group("size") != "&lt;dir&gt;":
+            continue
+        low = name.lower()
+        if not re.fullmatch(r"[a-z]{2}", low):
+            continue
+        if low in SKIP_ROOT_DIRS or low in SKIP_PREFIXES:
+            continue
+        found.add(low)
+    return sorted(found)
+
+
+def fetch_root_listing(source_root: str, user_agent: str,
+                       timeout_s: float = 30.0, transport=None) -> tuple[str, list[str]]:
+    import httpx
+
+    url = source_root.rstrip("/") + "/"
+    headers = {"User-Agent": user_agent, "Accept-Encoding": "identity"}
+    with httpx.Client(headers=headers, timeout=timeout_s, transport=transport,
+                      follow_redirects=True) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        html = resp.text
+    return html, list_catalog_prefixes(html)
+
+
 def snapshot_id_for(discovery: DiscoveryResult) -> str:
     """Deterministic snapshot id: newest listing mtime + short listing hash.
 

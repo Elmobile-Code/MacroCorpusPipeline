@@ -75,6 +75,7 @@ def validate_snapshot(manifest: Manifest, raw_dir: Path, processed_dir: Path,
             elif r.sha256 and sha256_file(local) != r.sha256:
                 rep.checksum_failures.append(r.relative_path)
 
+    index_path = processed_dir / "index.json"
     catalog_path = processed_dir / "series_catalog.parquet"
     obs_path = processed_dir / "observations.parquet"
     foot_path = processed_dir / "footnotes.parquet"
@@ -83,19 +84,26 @@ def validate_snapshot(manifest: Manifest, raw_dir: Path, processed_dir: Path,
         defined_footnotes = set(pq.read_table(foot_path, columns=["footnote_code"])
                                 .column("footnote_code").to_pylist())
     catalog_ids: set[str] = set()
-    if catalog_path.exists():
-        cat = pq.read_table(catalog_path, columns=["series_id"])
-        catalog_ids = set(cat.column("series_id").to_pylist())
-        rep.series_in_catalog = len(catalog_ids)
     obs_ids: set[str] = set()
     used_footnotes: set[str] = set()
-    if obs_path.exists():
-        pf = pq.ParquetFile(obs_path)
-        rep.observations = pf.metadata.num_rows
-        for batch in pf.iter_batches(columns=["series_id", "footnote_codes"], batch_size=262144):
-            obs_ids.update(batch.column("series_id").to_pylist())
-            for fc in batch.column("footnote_codes").to_pylist():
-                used_footnotes.update(split_footnotes(fc))
+    if index_path.exists():
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        catalog_ids = set(index)
+        rep.series_in_catalog = len(catalog_ids)
+        rep.observations = sum(int(v.get("observation_count") or 0) for v in index.values())
+        obs_ids = {sid for sid, v in index.items() if int(v.get("observation_count") or 0) > 0}
+    else:
+        if catalog_path.exists():
+            cat = pq.read_table(catalog_path, columns=["series_id"])
+            catalog_ids = set(cat.column("series_id").to_pylist())
+            rep.series_in_catalog = len(catalog_ids)
+        if obs_path.exists():
+            pf = pq.ParquetFile(obs_path)
+            rep.observations = pf.metadata.num_rows
+            for batch in pf.iter_batches(columns=["series_id", "footnote_codes"], batch_size=262144):
+                obs_ids.update(batch.column("series_id").to_pylist())
+                for fc in batch.column("footnote_codes").to_pylist():
+                    used_footnotes.update(split_footnotes(fc))
     rep.series_with_observations = len(obs_ids & catalog_ids) if catalog_ids else len(obs_ids)
     rep.catalog_series_without_observations = len(catalog_ids - obs_ids)
     rep.observation_series_not_in_catalog = sorted(obs_ids - catalog_ids)[:100]

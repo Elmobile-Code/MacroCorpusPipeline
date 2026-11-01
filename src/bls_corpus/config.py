@@ -38,16 +38,24 @@ class AppConfig:
         return f"{self.source_root.rstrip('/')}/{self.program_dir}/"
 
     @property
+    def catalog_dir(self) -> Path:
+        return self.data_dir / self.program_dir
+
+    @property
     def raw_root(self) -> Path:
-        return self.data_dir / "raw" / self.program_dir
+        return self.catalog_dir / "raw"
+
+    @property
+    def series_root(self) -> Path:
+        return self.catalog_dir / "series"
 
     @property
     def processed_root(self) -> Path:
-        return self.data_dir / "processed"
+        return self.catalog_dir
 
     @property
     def manifest_root(self) -> Path:
-        return self.data_dir / "manifests"
+        return self.catalog_dir
 
 
 def load_config(path: str | Path | None = None) -> AppConfig:
