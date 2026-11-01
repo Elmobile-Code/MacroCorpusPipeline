@@ -3,9 +3,7 @@ import hashlib
 
 import httpx
 
-from bls_corpus.config import AppConfig
-from bls_corpus.downloader import Downloader, sha256_file
-from bls_corpus.manifest import FileRecord
+from bls_corpus.pipeline import AppConfig, Downloader, FileRecord, sha256_file
 
 
 def _cfg() -> AppConfig:

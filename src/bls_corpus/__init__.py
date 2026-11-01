@@ -1,3 +1,3 @@
-"""BLS LABSTAT bulk downloader and parser."""
+"""BLS LABSTAT catalog pipeline."""
 
 __version__ = "0.1.0"

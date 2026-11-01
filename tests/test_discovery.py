@@ -1,7 +1,7 @@
 import pytest
 
-from bls_corpus.discovery import (
-    DiscoveryError, discover_remote, list_catalog_prefixes, parse_listing, snapshot_id_for,
+from bls_corpus.pipeline import (
+    DiscoveryError, discover_remote, list_catalog_prefixes, parse_listing,
 )
 
 SAMPLE = """<html><head><title>download.bls.gov - /pub/time.series/bd/</title></head><body>
@@ -49,13 +49,6 @@ def test_list_catalog_prefixes_skips_non_survey_dirs():
  1/1/2026 10:00 AM        5929 <A HREF="/pub/time.series/overview.txt">overview.txt</A><br>
 </pre>"""
     assert list_catalog_prefixes(html) == ["cu", "ws"]
-
-
-def test_snapshot_id_deterministic():
-    a = parse_listing(SAMPLE, "BD", "https://x/bd/")
-    b = parse_listing(SAMPLE, "BD", "https://x/bd/")
-    assert snapshot_id_for(a) == snapshot_id_for(b)
-    assert snapshot_id_for(a).startswith("bd-20260729")
 
 
 def test_discover_remote_missing_required_raises():

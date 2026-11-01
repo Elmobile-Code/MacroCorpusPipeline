@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from bls_corpus.schema import infer_schema, required_missing
+from bls_corpus.pipeline import infer_schema, required_missing
 
 FIX = Path(__file__).parent / "fixtures" / "bd"
 

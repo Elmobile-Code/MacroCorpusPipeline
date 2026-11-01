@@ -1,6 +1,6 @@
 # Architecture
 
-`python run.py` lists every two-letter survey on `https://download.bls.gov/pub/time.series/`, then downloads and writes each catalog.
+`python run.py` lists every two-letter survey on `https://download.bls.gov/pub/time.series/`, then downloads and writes each catalog. All of that lives in `src/bls_corpus/pipeline.py`.
 
 ```text
 python run.py
@@ -15,10 +15,7 @@ python run.py
   download ──▶ data/<prefix>/raw/
         │
         ▼
-  schema.py reads headers and joins names
-        │
-        ▼
-  engine.py (DuckDB)
+  join code labels, load with DuckDB
         │
         ▼
   data/<prefix>/series/<series_id>.json
@@ -26,15 +23,5 @@ python run.py
   data/<prefix>/index.json
   data/run.json
 ```
-
-| Module | Job |
-|---|---|
-| `run.py` / `pipeline.py` | List every catalog, download, process, write, record `data/run.json` |
-| `config.py` | Defaults for the BLS URL, User-Agent, and `data/<prefix>/` paths |
-| `discovery.py` | Root listing and per-catalog file roles |
-| `downloader.py` | Streaming download, retries, checksums |
-| `manifest.py` | Per-catalog file receipt used during download |
-| `schema.py` | Header-based layout and join rules |
-| `engine.py` | Load, dedupe, write one JSON file per `series_id` |
 
 A complete data file (`AllItems`, `AllData`, `AllCESSeries`) outranks a `Current` file. Codes stay text. A name table is joined when its code and label name the same thing.

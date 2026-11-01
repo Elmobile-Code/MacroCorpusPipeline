@@ -1,8 +1,7 @@
 import json
 from pathlib import Path
 
-from bls_corpus.config import AppConfig
-from bls_corpus.pipeline import process_program, run_all
+from bls_corpus.pipeline import AppConfig, process_program, run_all
 
 FIX = Path(__file__).parent / "fixtures" / "bd"
 

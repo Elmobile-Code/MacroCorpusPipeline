@@ -1,13 +1,13 @@
 import json
 from pathlib import Path
 
-from bls_corpus.engine import process_catalog, process_snapshot
+from bls_corpus.pipeline import process_catalog
 
 FIX = Path(__file__).parent / "fixtures" / "bd"
 
 
 def test_engine_on_bd_fixtures(tmp_path):
-    stats, schema = process_snapshot(FIX, tmp_path, "snap-bd", "BD")
+    stats, schema = process_catalog(FIX, tmp_path, "BD")
     assert schema.catalog_path == "bd.series"
     assert stats.series == 40
     assert stats.observations > 0

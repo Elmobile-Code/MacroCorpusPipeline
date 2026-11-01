@@ -3,9 +3,7 @@ import hashlib
 import httpx
 import pytest
 
-from bls_corpus.config import AppConfig
-from bls_corpus.downloader import Downloader
-from bls_corpus.manifest import FileRecord
+from bls_corpus.pipeline import AppConfig, Downloader, FileRecord
 
 
 def cfg() -> AppConfig:
